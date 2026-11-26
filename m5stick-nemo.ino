@@ -5,7 +5,11 @@
 //#define STICK_C_PLUS
 //#define STICK_C_PLUS2
 //#define STICK_C
-#define CARDPUTER
+//#define CARDPUTER
+#define CARDPUTER_ADV
+#if defined(CARDPUTER_ADV)
+  #define CARDPUTER
+#endif
 // -=-=- Uncommenting more than one at a time will result in errors -=-=-
 
 String buildver="2.0.5";
@@ -77,7 +81,11 @@ String buildver="2.0.5";
 #if defined(CARDPUTER)
   #include <M5Cardputer.h>
   // -=-=- Display -=-=-
-  String platformName="Cardputer";
+  #if defined(CARDPUTER_ADV)
+    String platformName="Cardputer ADV";
+  #else
+    String platformName="Cardputer";
+  #endif
   #define BIG_TEXT 4
   #define MEDIUM_TEXT 3
   #define SMALL_TEXT 2
@@ -85,7 +93,14 @@ String buildver="2.0.5";
   // -=-=- FEATURES -=-=-
   #define KB
   #define HID
-  #define ACTIVE_LOW_IR
+  #if defined(CARDPUTER_ADV)
+    #define M5LED_ON HIGH
+    #define M5LED_OFF LOW
+  #else
+    #define ACTIVE_LOW_IR
+    #define M5LED_ON LOW
+    #define M5LED_OFF HIGH
+  #endif
   #define USE_EEPROM
   // -=-=- ALIASES -=-=-
   #define DISP M5Cardputer.Display
@@ -633,6 +648,9 @@ void sendAllCodes() {
   } else {
     num_codes = num_EUcodes;
   }
+#if defined(CARDPUTER_ADV)
+  digitalWrite(IRLED, M5LED_ON);
+#endif
   for (i = 0 ; i < num_codes; i++)
   {
     if (region == NA) {
@@ -692,6 +710,9 @@ void sendAllCodes() {
       break; 
     }
   } 
+#if defined(CARDPUTER_ADV)
+  digitalWrite(IRLED, M5LED_OFF);
+#endif
   if (endingEarly == false)
   {
     delay_ten_us(MAX_WAIT_TIME); // wait 655.350ms
@@ -1593,6 +1614,10 @@ void setup() {
 #if defined(M5LED)
   pinMode(M5_LED, OUTPUT);
   digitalWrite(M5_LED, HIGH); //LEDOFF
+#endif
+#if defined(CARDPUTER_ADV)
+  pinMode(IRLED, OUTPUT);
+  digitalWrite(IRLED, M5LED_OFF);
 #endif
 #if !defined(KB)
   pinMode(M5_BUTTON_HOME, INPUT);
