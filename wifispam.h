@@ -78,7 +78,7 @@ const char rickrollssids[] PROGMEM = {
 
 // run-time variables
 char emptySSID[32];
-char beaconSSID[32];
+char beaconSSID[33];
 char randomName[32];
 uint8_t channelIndex = 0;
 uint8_t macAddr[6];
@@ -89,6 +89,7 @@ uint32_t packetCounter = 0;
 uint32_t attackTime = 0;
 uint32_t packetRateTime = 0;
 
+#include <string.h>
 #include <WiFi.h>
 
 extern "C" {
@@ -99,55 +100,40 @@ extern "C" {
 
 const char* generateRandomName() {
   const char* charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  int len = rand() % 10 + 1; // Generate a random length between 1 and 10
-  char* randomName = (char*)malloc((len + 1) * sizeof(char)); // Allocate memory for the random name
+  int len = rand() % 10 + 1;
+  char* randomName = (char*)malloc((len + 1) * sizeof(char));
   for (int i = 0; i < len; ++i) {
-    randomName[i] = charset[rand() % strlen(charset)]; // Select random characters from the charset
+    randomName[i] = charset[rand() % strlen(charset)];
   }
-  randomName[len] = '\0'; // Null-terminate the string
+  randomName[len] = '\0';
   return randomName;
 }
 
 char* randomSSID() {
   const char* charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  int len = rand() % 22 + 7; // Generate a random length between 1 and 10
+  int len = rand() % 22 + 7;
   for (int i = 0; i < len; ++i) {
-    randomName[i] = charset[rand() % strlen(charset)]; // S elect random characters from the charset
+    randomName[i] = charset[rand() % strlen(charset)];
   }
-  randomName[len] = '\0'; // Null-terminate the string
+  randomName[len] = '\0';
   return randomName;
 }
 
-
-uint8_t packet[128] = { 0x80, 0x00, 0x00, 0x00, //Frame Control, Duration
-                /*4*/   0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //Destination address
-                /*10*/  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, //Source address - overwritten later
-                /*16*/  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, //BSSID - overwritten to the same as the source address
-                /*22*/  0xc0, 0x6c, //Seq-ctl
-                /*24*/  0x83, 0x51, 0xf7, 0x8f, 0x0f, 0x00, 0x00, 0x00, //timestamp - the number of microseconds the AP has been active
-                /*32*/  0x64, 0x00, //Beacon interval
-                /*34*/  0x01, 0x04, //Capability info
-                /* SSID */
-                /*36*/  0x00
-                };
-
-// beacon frame definition
+// beacon frame definition (83 bytes base: 36-byte header + SSID tag + rates + channel)
 uint8_t beaconPacket[109] = {
-  /*  0 - 3  */ 0x80, 0x00, 0x00, 0x00, // Type/Subtype: managment beacon frame
+  /*  0 - 3  */ 0x80, 0x00, 0x00, 0x00, // Type/Subtype: management beacon frame
   /*  4 - 9  */ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Destination: broadcast
   /* 10 - 15 */ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, // Source
-  /* 16 - 21 */ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, // Source
+  /* 16 - 21 */ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, // BSSID
 
   // Fixed parameters
-  /* 22 - 23 */ 0x00, 0x00, // Fragment & sequence number (will be done by the SDK)
+  /* 22 - 23 */ 0x00, 0x00, // Fragment & sequence number
   /* 24 - 31 */ 0x83, 0x51, 0xf7, 0x8f, 0x0f, 0x00, 0x00, 0x00, // Timestamp
-  /* 32 - 33 */ 0xe8, 0x03, // Interval: 0x64, 0x00 => every 100ms - 0xe8, 0x03 => every 1s
-  /* 34 - 35 */ 0x31, 0x00, // capabilities Tnformation
+  /* 32 - 33 */ 0x64, 0x00, // Interval: every 100ms
+  /* 34 - 35 */ 0x01, 0x04, // Capability info
 
-  // Tagged parameters
-
-  // SSID parameters
-  /* 36 - 37 */ 0x00, 0x20, // Tag: Set SSID length, Tag length: 32
+  // SSID parameters (max 32 bytes)
+  /* 36 - 37 */ 0x00, 0x20, // Tag: SSID, Tag length: 32
   /* 38 - 69 */ 0x20, 0x20, 0x20, 0x20,
   0x20, 0x20, 0x20, 0x20,
   0x20, 0x20, 0x20, 0x20,
@@ -155,29 +141,29 @@ uint8_t beaconPacket[109] = {
   0x20, 0x20, 0x20, 0x20,
   0x20, 0x20, 0x20, 0x20,
   0x20, 0x20, 0x20, 0x20,
-  0x20, 0x20, 0x20, 0x20, // SSID
+  0x20, 0x20, 0x20, 0x20,
 
   // Supported Rates
-  /* 70 - 71 */ 0x01, 0x08, // Tag: Supported Rates, Tag length: 8
-  /* 72 */ 0x82, // 1(B)
-  /* 73 */ 0x84, // 2(B)
-  /* 74 */ 0x8b, // 5.5(B)
-  /* 75 */ 0x96, // 11(B)
-  /* 76 */ 0x24, // 18
-  /* 77 */ 0x30, // 24
-  /* 78 */ 0x48, // 36
-  /* 79 */ 0x6c, // 54
+  /* 70 - 71 */ 0x01, 0x08,
+  /* 72 */ 0x82,
+  /* 73 */ 0x84,
+  /* 74 */ 0x8b,
+  /* 75 */ 0x96,
+  /* 76 */ 0x24,
+  /* 77 */ 0x30,
+  /* 78 */ 0x48,
+  /* 79 */ 0x6c,
 
   // Current Channel
-  /* 80 - 81 */ 0x03, 0x01, // Channel set, length
-  /* 82 */      0x01,       // Current Channel
+  /* 80 - 81 */ 0x03, 0x01,
+  /* 82 */      0x01,
 
   // RSN information
   /*  83 -  84 */ 0x30, 0x18,
   /*  85 -  86 */ 0x01, 0x00,
   /*  87 -  90 */ 0x00, 0x0f, 0xac, 0x02,
   /*  91 -  92 */ 0x02, 0x00,
-  /*  93 - 100 */ 0x00, 0x0f, 0xac, 0x04, 0x00, 0x0f, 0xac, 0x04, /*Fix: changed 0x02(TKIP) to 0x04(CCMP) is default. WPA2 with TKIP not supported by many devices*/
+  /*  93 - 100 */ 0x00, 0x0f, 0xac, 0x04, 0x00, 0x0f, 0xac, 0x04,
   /* 101 - 102 */ 0x01, 0x00,
   /* 103 - 106 */ 0x00, 0x0f, 0xac, 0x02,
   /* 107 - 108 */ 0x00, 0x00
@@ -185,14 +171,12 @@ uint8_t beaconPacket[109] = {
 
 // goes to next channel
 void nextChannel() {
-  if (sizeof(channels) > 1) {
+  if (sizeof(channels) > 0) {
     uint8_t ch = channels[channelIndex];
-    channelIndex++;
-    if (channelIndex > sizeof(channels)) channelIndex = 0;
+    channelIndex = (channelIndex + 1) % sizeof(channels);
 
     if (ch != wifi_channel && ch >= 1 && ch <= 14) {
       wifi_channel = ch;
-      //wifi_set_channel(wifi_channel);
       esp_wifi_set_channel(wifi_channel, WIFI_SECOND_CHAN_NONE);
     }
   }
@@ -200,55 +184,60 @@ void nextChannel() {
 
 void beaconSpam(const char ESSID[]){
   Serial.printf("WiFi SSID: %s\n", ESSID);
-  int set_channel = random(1,12);
+  uint8_t set_channel = channels[channelIndex];
+  channelIndex = (channelIndex + 1) % sizeof(channels);
   esp_wifi_set_channel(set_channel, WIFI_SECOND_CHAN_NONE);
-  delay(1);
-  packet[10] = packet[16] = random(256);
-  packet[11] = packet[17] = random(256);
-  packet[12] = packet[18] = random(256);
-  packet[13] = packet[19] = random(256);
-  packet[14] = packet[20] = random(256);
-  packet[15] = packet[21] = random(256);
+
+  // Randomize locally administered unicast MAC for Source & BSSID
+  for (int idx = 0; idx < 6; idx++) {
+    uint8_t b = random(256);
+    if (idx == 0) {
+      b = (b & 0xFC) | 0x02;
+    }
+    beaconPacket[10 + idx] = b;
+    beaconPacket[16 + idx] = b;
+  }
 
   int realLen = strlen(ESSID);
-  int ssidLen = random(realLen, 33);
-  int numSpace = ssidLen - realLen;
-  //int rand_len = sizeof(rand_reg);
-  int fullLen = ssidLen;
-  packet[37] = fullLen;
+  if (realLen > 32) realLen = 32;
+  if (realLen < 1) return;
 
-  for(int i = 0; i < realLen; i++)
-    packet[38 + i] = ESSID[i];
+  beaconPacket[34] = wpa2 ? 0x31 : 0x01;
+  beaconPacket[37] = realLen;
 
-  for(int i = 0; i < numSpace; i++)
-    packet[38 + realLen + i] = 0x20;
+  for (int i = 0; i < 32; i++) {
+    beaconPacket[38 + i] = (i < realLen) ? (uint8_t)ESSID[i] : 0x20;
+  }
 
-  packet[50 + fullLen] = set_channel;
+  beaconPacket[82] = set_channel;
+  int txLen = wpa2 ? sizeof(beaconPacket) : 83;
 
-  esp_wifi_80211_tx(WIFI_IF_STA, packet, sizeof(packet), false);
-  esp_wifi_80211_tx(WIFI_IF_STA, packet, sizeof(packet), false);
-  esp_wifi_80211_tx(WIFI_IF_STA, packet, sizeof(packet), false);
+  esp_wifi_80211_tx(WIFI_IF_STA, beaconPacket, txLen, false);
+  delay(1);
 }
 
 void beaconSpamList(const char list[]){
-  // Parses the char array and splits it into SSIDs
   int i = 0;
   int j = 0;
-  int ssidNum = 1;
   char tmp;
   int ssidsLen = strlen_P(list);
-  bool sent = false;
   while (i < ssidsLen) {
-    // read out next SSID
     j = 0;
     do {
       tmp = pgm_read_byte(list + i + j);
       j++;
-    } while (tmp != '\n' && j <= 32 && i + j < ssidsLen);
-    uint8_t ssidLen = j - 1;
-    memcpy_P(&beaconSSID, &list[i], ssidLen);
-    beaconSpam(beaconSSID);
-    memcpy_P(&beaconSSID, &emptySSID, 32);
+    } while (tmp != '\n' && tmp != '\0' && j <= 32 && i + j < ssidsLen);
+
+    uint8_t ssidLen = (tmp == '\n') ? (j - 1) : j;
+    if (ssidLen > 32) ssidLen = 32;
+
+    memset(beaconSSID, 0, sizeof(beaconSSID));
+    if (ssidLen > 0) {
+      memcpy_P(beaconSSID, list + i, ssidLen);
+      beaconSSID[ssidLen] = '\0';
+      beaconSpam(beaconSSID);
+    }
+
     i += j;
   }
 }
