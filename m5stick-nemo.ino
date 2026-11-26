@@ -1267,12 +1267,12 @@ void wifispam_setup() {
     packetSize -= 26;
   }
 
-  //change WiFi mode for raw 802.11 frame TX
-  WiFi.disconnect();
+  // change WiFi mode to AP so WIFI_IF_AP is active for raw 802.11 TX
+  WiFi.disconnect(true);
   WiFi.mode(WIFI_MODE_AP);
+  WiFi.softAP("Nemo_AP", nullptr, channels[0], true, 1);
+  delay(50);
   esp_wifi_set_promiscuous(true);
-
-  // set channel
   esp_wifi_set_channel(channels[0], WIFI_SECOND_CHAN_NONE);
   attackTime = millis();
 
@@ -1285,9 +1285,9 @@ void wifispam_setup() {
   DISP.fillScreen(BGCOLOR);
   DISP.setCursor(0, 0);
   DISP.print("WiFi Spam");
-    int ct = 0;
-    const char *str;
-    switch(spamtype) {
+  int ct = 0;
+  const char *str;
+  switch(spamtype) {
     case 1:
       for(str = funnyssids; *str; ++str) ct += *str == '\n';
       DISP.printf(" - %d SSIDs:\n", ct);
