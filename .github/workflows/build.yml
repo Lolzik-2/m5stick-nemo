@@ -86,12 +86,12 @@ jobs:
           language=$(echo "LANGUAGE_${locale//-/_}" | tr '[:lower:]' '[:upper:]')
           extra_flags="${{ matrix.board.extra_flags }} -DNEMO_VERSION=\"${version}\" -D${language}"
 
-          # Обрати внимание: ./nemo.ino - убедись, что файл так называется, или поменяй на ./
+          # Явно указываем имя файла m5stick-nemo.ino
           arduino-cli compile --fqbn ${{ matrix.board.fqbn }} -e \
                               --build-property build.partitions=huge_app \
                               --build-property upload.maximum_size=3145728 \
                               --build-property compiler.cpp.extra_flags="${extra_flags}" \
-                              .
+                              ./m5stick-nemo.ino
 
       - name: Create ${{ matrix.board.name }} Firmware Binary
         run: |
@@ -109,7 +109,7 @@ jobs:
           base_fqbn=$(echo $fqbn | cut -d':' -f1-3)
           directory="${base_fqbn//:/.}"
           
-          # Замени 'm5stick-nemo' на реальное имя твоего .ino файла без расширения, если оно другое
+          # Явно указываем имя файла m5stick-nemo.ino для сборки бинарника
           esptool.py --chip esp32s3 merge_bin --output ${output_file}  \
             ${{ matrix.board.partitions.bootloader_addr }} build/${directory}/m5stick-nemo.ino.bootloader.bin \
             0x8000 build/${directory}/m5stick-nemo.ino.partitions.bin \
