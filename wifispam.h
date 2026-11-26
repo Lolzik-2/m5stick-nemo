@@ -119,7 +119,7 @@ char* randomSSID() {
   return randomName;
 }
 
-// beacon frame definition (83 bytes base: 36-byte header + SSID tag + rates + channel)
+// beacon frame definition
 uint8_t beaconPacket[109] = {
   /*  0 - 3  */ 0x80, 0x00, 0x00, 0x00, // Type/Subtype: management beacon frame
   /*  4 - 9  */ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Destination: broadcast
@@ -212,7 +212,7 @@ void beaconSpam(const char ESSID[]){
   beaconPacket[82] = set_channel;
   int txLen = wpa2 ? sizeof(beaconPacket) : 83;
 
-  esp_wifi_80211_tx(WIFI_IF_STA, beaconPacket, txLen, false);
+  esp_wifi_80211_tx(WIFI_IF_AP, beaconPacket, txLen, false);
   delay(1);
 }
 
