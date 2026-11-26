@@ -124,6 +124,7 @@ String buildver="2.0.5";
 #include "wifispam.h"
 #include <BLEUtils.h>
 #include <BLEServer.h>
+#include <esp_wifi.h>
 
 int advtime = 0; 
 int cursor = 0;
@@ -409,9 +410,7 @@ void screen_dim_proc() {
 /// SETTINGS MENU ///
 MENU smenu[] = {
   { "Back", 1},
-#if defined(AXP)
   { "Battery Info", 6},
-#endif
   { "Brightness", 4},
 #if defined(RTC)
   { "Set Clock", 3},
@@ -457,7 +456,7 @@ void smenu_loop() {
       EEPROM.write(0, 255); // Rotation
       EEPROM.write(1, 255); // dim time
       EEPROM.write(2, 255); // brightness
-      EEPROM.write(2, 255); // TV-B-Gone Region
+      EEPROM.write(3, 255); // TV-B-Gone Region
       EEPROM.commit();
 #endif
       ESP.restart();
@@ -466,7 +465,7 @@ void smenu_loop() {
   }
 }
 
-int rotation = 1;
+int rotation = 0;
 #if defined(ROTATION)
   /// Rotation MENU ///
   MENU rmenu[] = {
@@ -513,44 +512,71 @@ int rotation = 1;
   }
 #endif //ROTATION
 
+/// BATTERY INFO ///
+void battery_drawmenu(int battery, int b, int c) {
+  DISP.setTextSize(SMALL_TEXT);
+  DISP.fillScreen(BGCOLOR);
+  DISP.setCursor(0, 8, 1);
+  DISP.print("Battery: ");
+  DISP.print(battery);
+  DISP.println("%");
 #if defined(AXP)
-  /// BATTERY INFO ///
-  void battery_drawmenu(int battery, int b, int c) {
-    DISP.setTextSize(SMALL_TEXT);
-    DISP.fillScreen(BGCOLOR);
-    DISP.setCursor(0, 8, 1);
-    DISP.print("Battery: ");
-    DISP.print(battery);
-    DISP.println("%");
-    DISP.print("DeltaB: ");
-    DISP.println(b);
-    DISP.print("DeltaC: ");
-    DISP.println(c);
-    DISP.println("");
-    DISP.println("Press any button to exit");
-  }
-  void battery_setup() {
-    rstOverride = false;
-    float c = M5.Axp.GetVapsData() * 1.4 / 1000;
-    float b = M5.Axp.GetVbatData() * 1.1 / 1000;
-    int battery = ((b - 3.0) / 1.2) * 100;
-    battery_drawmenu(battery, b, c);
-    delay(500); // Prevent switching after menu loads up
-  }
+  DISP.print("DeltaB: ");
+  DISP.println(b);
+  DISP.print("DeltaC: ");
+  DISP.println(c);
+#elif defined(CARDPUTER)
+  DISP.print("Voltage: ");
+  DISP.print(b);
+  DISP.println(" mV");
+#endif
+  DISP.println("");
+  DISP.println("Press select to exit");
+}
 
-  void battery_loop() {
-    delay(300);
-    float c = M5.Axp.GetVapsData() * 1.4 / 1000;
-    float b = M5.Axp.GetVbatData() * 1.1 / 1000;
-    int battery = ((b - 3.0) / 1.2) * 100;
-    battery_drawmenu(battery, b, c);
-    if (check_select_press()) {
-      rstOverride = false;
-      isSwitching = true;
-      current_proc = 1;
-    }
+void battery_setup() {
+  rstOverride = false;
+  int battery = 0;
+  int b = 0;
+  int c = 0;
+#if defined(AXP)
+  float fc = M5.Axp.GetVapsData() * 1.4 / 1000;
+  float fb = M5.Axp.GetVbatData() * 1.1 / 1000;
+  battery = ((fb - 3.0) / 1.2) * 100;
+  b = (int)(fb * 100);
+  c = (int)(fc * 100);
+#elif defined(CARDPUTER)
+  M5Cardputer.update();
+  battery = M5Cardputer.Power.getBatteryLevel();
+  b = M5Cardputer.Power.getBatteryVoltage();
+#endif
+  battery_drawmenu(battery, b, c);
+  delay(500); // Prevent switching after menu loads up
+}
+
+void battery_loop() {
+  delay(300);
+  int battery = 0;
+  int b = 0;
+  int c = 0;
+#if defined(AXP)
+  float fc = M5.Axp.GetVapsData() * 1.4 / 1000;
+  float fb = M5.Axp.GetVbatData() * 1.1 / 1000;
+  battery = ((fb - 3.0) / 1.2) * 100;
+  b = (int)(fb * 100);
+  c = (int)(fc * 100);
+#elif defined(CARDPUTER)
+  M5Cardputer.update();
+  battery = M5Cardputer.Power.getBatteryLevel();
+  b = M5Cardputer.Power.getBatteryVoltage();
+#endif
+  battery_drawmenu(battery, b, c);
+  if (check_select_press()) {
+    rstOverride = false;
+    isSwitching = true;
+    current_proc = 1;
   }
-#endif // AXP
+}
 
 /// TV-B-GONE ///
 void tvbgone_setup() {
@@ -1230,7 +1256,7 @@ void wifispam_setup() {
   for (int i = 0; i < 32; i++)
     emptySSID[i] = ' ';
   // for random generator
-  randomSeed(1);
+  randomSeed(esp_random());
 
   // set packetSize
   packetSize = sizeof(beaconPacket);
@@ -1241,11 +1267,14 @@ void wifispam_setup() {
     packetSize -= 26;
   }
 
-  //change WiFi mode
-  WiFi.mode(WIFI_MODE_STA);
+  //change WiFi mode for raw 802.11 frame TX
+  WiFi.disconnect();
+  WiFi.mode(WIFI_MODE_AP);
+  esp_wifi_set_promiscuous(true);
 
   // set channel
   esp_wifi_set_channel(channels[0], WIFI_SECOND_CHAN_NONE);
+  attackTime = millis();
 
   DISP.fillScreen(BGCOLOR);
   DISP.setTextSize(BIG_TEXT);
@@ -1278,8 +1307,6 @@ void wifispam_setup() {
 }
 
 void wifispam_loop() {
-  int i = 0;
-  int len = 0;
 #if defined(M5LED)
   digitalWrite(M5_LED, LOW); //LED ON on Stick C Plus
   delay(1);
@@ -1287,29 +1314,19 @@ void wifispam_loop() {
 #endif
   currentTime = millis();
   if (currentTime - attackTime > 100) {
+    attackTime = currentTime;
     switch(spamtype) {
       case 1:
-        len = sizeof(funnyssids);
-        while(i < len){
-          i++;
-        }
         beaconSpamList(funnyssids);
         break;
       case 2:
-        len = sizeof(rickrollssids);
-        while(i < len){
-          i++;
-        }
         beaconSpamList(rickrollssids);
         break;
-      case 3:
+      case 3: {
         char* randoms = randomSSID();
-        len = sizeof(randoms);
-        while(i < len){
-          i++;
-        }
         beaconSpamList(randoms);
-        break;        
+        break;
+      }
     }
   }
 }
@@ -1591,7 +1608,7 @@ void setup() {
     if(EEPROM.read(0) > 3 || EEPROM.read(1) > 30 || EEPROM.read(2) > 100 || EEPROM.read(3) > 1) {
       // Assume out-of-bounds settings are a fresh/corrupt EEPROM and write defaults for everything
       Serial.println("EEPROM likely not properly configured. Writing defaults.");
-      EEPROM.write(0, 3);    // Left rotation
+      EEPROM.write(0, 0);    // Default rotation 0
       EEPROM.write(1, 15);   // 15 second auto dim time
       EEPROM.write(2, 100);  // 100% brightness
       EEPROM.write(3, 0); // TVBG NA Region
@@ -1675,11 +1692,9 @@ void loop() {
       case 5:
         tvbgone_setup();
         break;
-#if defined(AXP)
       case 6:
         battery_setup();
         break;
-#endif
 #if defined(ROTATION)
       case 7:
         rmenu_setup();
@@ -1745,11 +1760,9 @@ void loop() {
     case 5:
       tvbgone_loop();
       break;
-#if defined(AXP)
     case 6:
       battery_loop();
       break;
-#endif
 #if defined(ROTATION)
     case 7:
       rmenu_loop();
