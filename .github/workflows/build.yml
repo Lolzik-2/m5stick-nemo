@@ -1,0 +1,133 @@
+---
+name: Compile Nemo ADV
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  compile_sketch:
+    name: Build Nemo (${{ matrix.locale }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        locale:
+          - en-us
+          - pt-br
+        board:
+          - {
+              name: "M5CardputerADV",
+              fqbn: "m5stack:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB,USBMode=hwcdc,CDCOnBoot=cdc",
+              extra_flags: "-DCARDPUTER_ADV",
+              libraries: "M5Cardputer IRRemoteESP8266",
+              partitions: {
+                bootloader_addr: "0x0000",
+              },
+            }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: nemo_version
+        name: Get Nemo Version
+        run: |
+          set -x
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            version=${{ github.ref_name }}
+          else
+            version="${GITHUB_SHA::7}"
+          fi
+          echo "version=${version}" >> $GITHUB_OUTPUT
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: Install platform
+        run: |
+          set -x
+          arduino-cli core install m5stack:esp32 --additional-urls "file:///${PWD}/package_m5stack_index.json"
+          arduino-cli lib install ${{ matrix.board.libraries }} --log-level warn --verbose
+
+      - name: Install esptool
+        run: |
+          pip install -U esptool
+
+      - name: Setup platform.txt
+        run: |
+          baseFolder="$HOME/.arduino15/packages/m5stack/hardware/esp32"
+          latestVersion=$(find "$baseFolder" -maxdepth 1 -type d -exec basename {} \; | sort -V | head -n 1)
+          file="$baseFolder/$latestVersion/platform.txt"
+          
+          awk -v prefix="build.extra_flags.esp32" -v option=" -w " -v prefix2="compiler.c.elf.libs.esp32" -v option2=" -zmuldefs " '{
+              if ($0 ~ "^" prefix) {
+                  sub(/=/, "=" option);
+                  print;
+              } else if ($0 ~ "^" prefix2) {
+                  sub(/=/, "=" option2);
+                  print;
+              } else {
+                  print;
+              }
+          }' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+
+      - name: Compile ${{ matrix.board.name }} Sketch
+        run: |
+          set -x
+          version=${{ steps.nemo_version.outputs.version }}
+          locale=${{ matrix.locale }}
+          language=$(echo "LANGUAGE_${locale//-/_}" | tr '[:lower:]' '[:upper:]')
+          extra_flags="${{ matrix.board.extra_flags }} -DNEMO_VERSION=\"${version}\" -D${language}"
+
+          # Обрати внимание: ./nemo.ino - убедись, что файл так называется, или поменяй на ./
+          arduino-cli compile --fqbn ${{ matrix.board.fqbn }} -e \
+                              --build-property build.partitions=huge_app \
+                              --build-property upload.maximum_size=3145728 \
+                              --build-property compiler.cpp.extra_flags="${extra_flags}" \
+                              .
+
+      - name: Create ${{ matrix.board.name }} Firmware Binary
+        run: |
+          set -x
+          version=${{ steps.nemo_version.outputs.version }}
+          locale=${{ matrix.locale }}
+          
+          if [[ "${locale}" == "en-us" ]]; then
+            output_file="M5Nemo-${version}-${{ matrix.board.name }}.bin"
+          else
+            output_file="M5Nemo-${version}-${{ matrix.board.name }}.${locale}.bin"
+          fi
+          
+          fqbn=${{ matrix.board.fqbn }}
+          base_fqbn=$(echo $fqbn | cut -d':' -f1-3)
+          directory="${base_fqbn//:/.}"
+          
+          # Замени 'm5stick-nemo' на реальное имя твоего .ino файла без расширения, если оно другое
+          esptool.py --chip esp32s3 merge_bin --output ${output_file}  \
+            ${{ matrix.board.partitions.bootloader_addr }} build/${directory}/m5stick-nemo.ino.bootloader.bin \
+            0x8000 build/${directory}/m5stick-nemo.ino.partitions.bin \
+            0x10000 build/${directory}/m5stick-nemo.ino.bin
+
+      - name: List all files
+        if: always()
+        continue-on-error: true
+        run: |
+          set -x
+          pwd
+          ls -all
+          tree
+
+      - name: Upload ${{ matrix.board.name }} Firmware Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: M5Nemo-${{ matrix.board.name }}.${{ matrix.locale }}
+          path: M5Nemo-*.bin
+          retention-days: 5
+          if-no-files-found: error
